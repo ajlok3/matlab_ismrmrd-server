@@ -25,6 +25,7 @@ classdef perfusion_rest < handle
             imgGroup = cell(1,0); % ismrmrd.Image;
             wavGroup = cell(1,0); % ismrmrd.Waveform;
             try
+                zero_filled_emitted = false;
                 while true
                     item = next(connection);
 
@@ -37,6 +38,16 @@ classdef perfusion_rest < handle
                             ~item.head.flagIsSet(item.head.FLAGS.ACQ_IS_PHASECORR_DATA)       && ...
                             ~item.head.flagIsSet(item.head.FLAGS.ACQ_IS_PARALLEL_CALIBRATION)       )
                                 acqGroup{end+1} = item;
+                        end
+                        
+                        % When this criteria is met, run process_raw() on the accumulated
+                        % data, which returns images that are sent back to the client.
+                        if length(acqGroup) == 132 * 30
+                            zero_filled_emitted = true;
+                            logging.info("Processing a group of k-space data")
+                            zero_filled = obj.process_raw_zero_filled(acqGroup, config, metadata, logging);
+                            logging.debug("Sending zero-filled images to client")
+                            connection.send_image(zero_filled);
                         end
 
                     elseif isempty(item)
@@ -54,14 +65,14 @@ classdef perfusion_rest < handle
             % Process group of raw k-space data.
             if ~isempty(acqGroup)
                 logging.info("Processing a group of k-space data (untriggered)")
-                
-%                 zero_filled = obj.process_raw_zero_filled(acqGroup, config, metadata, logging);
-%                 logging.debug("Sending zero-filled images to client")
-%                 connection.send_image(zero_filled);
-                
-                image = obj.process_raw(acqGroup, config, metadata, logging);
-                logging.debug("Sending image to client")
-                connection.send_image(image);
+                 if ~zero_filled_emitted
+                     zero_filled = obj.process_raw_zero_filled(acqGroup, config, metadata, logging);
+                     logging.debug("Sending zero-filled images to client")
+                     connection.send_image(zero_filled);
+                 end
+                 image = obj.process_raw(acqGroup, config, metadata, logging);
+                 logging.debug("Sending image to client")
+                 connection.send_image(image);
                 
                 acqGroup = cell(1,0);
             end
@@ -91,12 +102,12 @@ classdef perfusion_rest < handle
             %%
             kspAll = permute(squeeze(kspAll), [1, 3, 5, 2, 4]);
             lambda1 = 0.010
-            for slices = 1:4
+            for slices = 1:1
                 [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
                 % slices = 1
                 coil_keep = 0;
                 Recon_CS_TTV_TPCA = [];
-                kSpace_slc = kspAll(:,:,:,:,slices);
+                kSpace_slc = kspAll(:,:,:, 1:8, slices);
 
                 % stack slices along the time dimension
                 %kSpace_slc = permute(reshape(permute(kspAll, [1,2,4,3,5]), Nx, Ny, Nc, Nt*Nslc), [1,2,4,3]);
@@ -191,7 +202,7 @@ classdef perfusion_rest < handle
             % Normalize and convert to short (int16)
             img = img .* (32767./max(img(:)));
             img = int16(round(img));
-            img = rot90(img);
+            img = rot90(img, 2);
             % Invert image contrast
             % img = int16(abs(32767-img));
 
@@ -211,15 +222,19 @@ classdef perfusion_rest < handle
                     % centerIdx = 1;
 
                     % Copy the relevant AcquisitionHeader fields to ImageHeader
-                    image.head.fromAcqHead(group{centerIdx}.head);
-
+                    image.head = image.head.fromAcqHead(group{centerIdx}.head);
+                    % TODO: the following two lines perform the work that
+                    % the above should do
+                    % image.head.acquisition_time_stamp = group{centerIdx}.head.acquisition_time_stamp;
+                    % image.head.physiology_time_stamp = group{centerIdx}.head.physiology_time_stamp;
+                    
                     % field_of_view is mandatory
                     image.head.field_of_view  = single([metadata.encoding(1).reconSpace.fieldOfView_mm.x ...
                                                         metadata.encoding(1).reconSpace.fieldOfView_mm.y ...
                                                         metadata.encoding(1).reconSpace.fieldOfView_mm.z]);
                     
-                                                    
-                    image.head.image_series_index = sl;
+                    % calib data ==> series index 0                                
+                    image.head.image_series_index = 0;
                     image.head.image_index = tm;
                     
                     % Set ISMRMRD Meta Attributes
@@ -237,7 +252,7 @@ classdef perfusion_rest < handle
                     images{end+1} = image;
                 end
             end
-            logging.info(sprintf('Reconstructed %d images', numel(images)))
+            logging.info(sprintf('Reconstructed %d zero-filled images', numel(images)))
         end
 
 
