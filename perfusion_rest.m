@@ -25,7 +25,6 @@ classdef perfusion_rest < handle
             imgGroup = cell(1,0); % ismrmrd.Image;
             wavGroup = cell(1,0); % ismrmrd.Waveform;
             try
-                zero_filled_emitted = false;
                 while true
                     item = next(connection);
 
@@ -40,12 +39,11 @@ classdef perfusion_rest < handle
                                 acqGroup{end+1} = item;
                         end
                         
-                        % When this criteria is met, run process_raw() on the accumulated
+                        % When this criteria is met, run process_raw_zero_filled() on the accumulated
                         % data, which returns images that are sent back to the client.
-                        if length(acqGroup) == 132 * 30
-                            zero_filled_emitted = true;
-                            logging.info("Processing a group of k-space data")
-                            zero_filled = obj.process_raw_zero_filled(acqGroup, config, metadata, logging);
+                        if (item.head.flagIsSet(item.head.FLAGS.ACQ_LAST_IN_REPETITION))
+                            logging.info(sprintf("Processing a group of k-space data; %d items", length(acqGroup(end-131:end))))
+                            zero_filled = obj.process_raw_zero_filled(acqGroup(end-131:end), config, metadata, logging);
                             logging.debug("Sending zero-filled images to client")
                             connection.send_image(zero_filled);
                         end
@@ -65,11 +63,6 @@ classdef perfusion_rest < handle
             % Process group of raw k-space data.
             if ~isempty(acqGroup)
                 logging.info("Processing a group of k-space data (untriggered)")
-                 if ~zero_filled_emitted
-                     zero_filled = obj.process_raw_zero_filled(acqGroup, config, metadata, logging);
-                     logging.debug("Sending zero-filled images to client")
-                     connection.send_image(zero_filled);
-                 end
                  image = obj.process_raw(acqGroup, config, metadata, logging);
                  logging.debug("Sending image to client")
                  connection.send_image(image);
@@ -89,115 +82,89 @@ classdef perfusion_rest < handle
             twix_obj = twix_map_obj_fire;
             twix_obj.setMrdAcq(group);
             
-            kspAll = twix_obj.imageData();
+            %% this is necessary to avoid non-square images and 'oversized' kspace
+            twix_obj.NLin = twix_obj.NCol / 2;
+            twix_obj.NRep = 1;
+            twix_obj.Rep = ones(1,length(twix_obj.Rep));
+            
+            %% preparing kspace
+            kspAll = squeeze(twix_obj.imageData());
+            kspAll = permute(kspAll(:,1:8,:,1,end), [1,3,2]); %first 8 coils of the first slice of the last heartbeat
             tmpKsp =fftshift(fft(fftshift(kspAll,1),[],1),1)/sqrt(size(kspAll,1));
             tmpKsp = tmpKsp(size(tmpKsp, 1)/4 + 1 : size(tmpKsp, 1)*3/4, :, :, :, :, :, :, :, :);
             kspAll = fftshift(ifft(fftshift(tmpKsp,1),[],1),1)*sqrt(size(tmpKsp,1));
-            logging.info("Data is 'mapVBVD formatted' with dimensions:")  % Data is 'mapVBVD formatted' with dimensions:
-            logging.info(sprintf('%s ', twix_obj.dataDims{1:10}))         % Col Cha Lin Par Sli Ave Phs Eco Rep Set
-            logging.info(sprintf('%3d ', size(kspAll)))                   % 404  14 124   1   1   1   1   1   1  11
+%             logging.info("Data is 'mapVBVD formatted' with dimensions:")  % Data is 'mapVBVD formatted' with dimensions:
+%             logging.info(sprintf('%s ', twix_obj.dataDims{1:10}))         % Col Cha Lin Par Sli Ave Phs Eco Rep Set
+%             logging.info(sprintf('%3d ', size(kspAll)))                   % 404  14 124   1   1   1   1   1   1  11
 
             %%
             %  Daming's code from here
             %%
-            kspAll = permute(squeeze(kspAll), [1, 3, 5, 2, 4]);
-            lambda1 = 0.010
-            for slices = 1:1
-                [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
-                % slices = 1
-                coil_keep = 0;
-                Recon_CS_TTV_TPCA = [];
-                kSpace_slc = kspAll(:,:,:, 1:8, slices);
-
-                % stack slices along the time dimension
-                %kSpace_slc = permute(reshape(permute(kspAll, [1,2,4,3,5]), Nx, Ny, Nc, Nt*Nslc), [1,2,4,3]);
-
-                % detecting noisy coils
-                CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
-                for zz=1:size(CS_mask,2)
-                    CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1;
-                end
-                acc=size(kSpace_slc,2)*size(kSpace_slc,3)/sum(CS_mask(:));
-                CS_mask2 = zeros(Nx,Ny,Nt);
-                % all slices version
-                % CS_mask2 = zeros(Nx, Ny, Nt*Nslc);
-                for i = 1:Nx
-                    CS_mask2(i,:,:) = CS_mask;
-                end
-
-                    count = 1;
-               
-                % all slices version
-                % kSpace_slc = kSpace_slc(:,:,:,coil_keep);
-                [Nx, Ny, Nt, Nc] = size(kSpace_slc);
-
-               
-                NumOfComp = Nc;
-                
-
-        % % scaling PD scans: 2 PD and then 63 T1w images 
-                    t1w = squeeze(kSpace_slc(:,:,end,:));
-                    pd = squeeze(kSpace_slc(:,:,1,:));
-                    tmp_sort_t1w = sort( abs(t1w(:)), 'descend' );
-                    tmp_sort_pd = sort( abs(pd(:)), 'descend' );
-        % % %             max_ratio = tmp_sort_pd(1)/tmp_sort_t1w(1)
-                    mean_t1w = mean(tmp_sort_t1w(1:round(length(t1w(:))*1)));
-                    mean_pd = mean(tmp_sort_pd(1:round(length(pd(:))*1)));
-                    max_ratio = mean_pd/mean_t1w
-                    kSpace_slc(:,:,1:2,:) = abs(kSpace_slc(:,:,1:2,:))./max_ratio.*exp(1i*angle(kSpace_slc(:,:,1:2,:))); 
-
-                    CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
-                    for zz=1:size(CS_mask,2)
-                        CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1;
-                    end
-                    acc=size(kSpace_slc,2)*size(kSpace_slc,3)/sum(CS_mask(:));
-                    %raw data normalization
-        %             aux=ifft2c_mri(kSpace_slc);
-        %             sf=max( abs(aux(:)) );
-        %             aux=aux/sf;
-        %             kSpace_slc=fft2c_mri(aux);
-                    CS_mask2 = zeros(Nx,Ny,Nt);
-                    for i = 1:Nx
-                        CS_mask2(i,:,:) = CS_mask;
-                    end
-        % % %             DC=squeeze(sum(kSpace_slc,3));
-                    DC = squeeze( sum(kSpace_slc(:,:,1:end,:),3) );
-                    SM=squeeze(sum(CS_mask2,3));
-                    SM(find(SM==0))=1;
-                    for ii = 1:NumOfComp
-                        DC(:,:,ii)=DC(:,:,ii)./SM;
-                    end
-                    %%% This ref is the unpaired FFT for the coil sensitivity maps. The
-                    %%% unpaired FFT for the kdata is withinEmat_2DPERF.mtimes
-                    ref=ifft2c_mri(DC);
-                    [dummy,b1]=adapt_array_2d_st2(ref);
-                    b1=b1/max( abs(b1(:)) );
-
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % % iterative reconstruction
-                    param = struct();
-                    param.TPCA = TempPCA();
-                    param.TTV = TV_Temp();
-                    param.STV = TV_2DPERF();
-                    param.nite = 9;
-                    param.display = 1;
-                    param.VW = 'on';
-                    param.TTVw = lambda1;
-                    param.TPCAw = lambda1*0.5;
-                    param.STVw = 0;
-
-                    param.E = Emat_2DPERF( gpuArray(single(CS_mask2)), gpuArray(single(b1)) );
-                    %recon the first image
-                    param.y = gpuArray(single( kSpace_slc ));
-                    Recon_CS_TTV_TPCA = gpuArray( param.E'*param.y );
-                    Recon_CS_TTV_TPCA_CoilCompGPU = gather(Recon_CS_TTV_TPCA);
-
-                    recon_cs_total(:,:,:,slices) = Recon_CS_TTV_TPCA_CoilCompGPU;
+           
+            kSpace_slc(:,:,1,:) = kspAll;
+            [Nx, Ny, Nt, Nc] = size(kSpace_slc);
+            CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
+            
+            for zz=1:size(CS_mask,2)
+                CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1; 
             end
+            
+            
+            CS_mask2 = zeros(Nx,Ny,Nt);
+            
+            for i = 1:Nx
+                CS_mask2(i,:,:) = CS_mask;
+            end
+          
+            NumOfComp = Nc;
+                 
+            % clear tmp_data compressed_data coeff    
+            CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
+            
+            for zz=1:size(CS_mask,2)
+                CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1;
+            end
+            CS_mask2 = zeros(Nx,Ny,Nt);
+            for i = 1:Nx
+                CS_mask2(i,:,:) = CS_mask;
+            end
+            DC = squeeze( sum(kSpace_slc(:,:,1:end,:),3) );
+            SM=squeeze(sum(CS_mask2,3));
+            SM(find(SM==0))=1;
+            for ii = 1:NumOfComp
+                DC(:,:,ii)=DC(:,:,ii)./SM;    
+            end
+            %% stop prep
+            ref=ifft2c_mri(DC);
+                    % try without sense maps
+                    %ref = sum(ref,3);
+                     [dummy,b1]=adapt_array_2d_st2(ref);
+                     b1=b1/max( abs(b1(:)) );
+ 
+         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+         % % iterative reconstruction
+                     param = struct();
+                     param.TPCA = TempPCA();
+                     param.TTV = TV_Temp();
+                     param.STV = TV_2DPERF();
+                     param.display = 1;
+                     param.VW = 'off';
+                     param.TTVw = 0;
+                     param.TPCAw = 0;
+                     param.STVw = 0;
+ 
+                     param.E = Emat_2DPERF( gpuArray(single(CS_mask2)), gpuArray(single(b1)) );
+                     %recon the first image
+                     param.y = gpuArray(single( kSpace_slc ));
+                     Recon_CS_TTV_TPCA = gpuArray( param.E'*param.y );
+                     Recon_CS_TTV_TPCA_CoilCompGPU = gather(Recon_CS_TTV_TPCA);
+ 
+                     recon_cs_total(:,:,:,1) = Recon_CS_TTV_TPCA_CoilCompGPU;
+            
             % image processing
             % TODO: export complex images
             img = abs(recon_cs_total);
-            logging.debug("Image data is size %d x %d x %d after coil combine and phase oversampling removal", size(img))
+            logging.debug("Image data is size %d x %d", size(img))
 
             % Normalize and convert to short (int16)
             img = img .* (32767./max(img(:)));
@@ -222,11 +189,9 @@ classdef perfusion_rest < handle
                     % centerIdx = 1;
 
                     % Copy the relevant AcquisitionHeader fields to ImageHeader
+                    % image.head.fromAcqHead(group{centerIdx}.head);
                     image.head = image.head.fromAcqHead(group{centerIdx}.head);
-                    % TODO: the following two lines perform the work that
-                    % the above should do
-                    % image.head.acquisition_time_stamp = group{centerIdx}.head.acquisition_time_stamp;
-                    % image.head.physiology_time_stamp = group{centerIdx}.head.physiology_time_stamp;
+                    
                     
                     % field_of_view is mandatory
                     image.head.field_of_view  = single([metadata.encoding(1).reconSpace.fieldOfView_mm.x ...
