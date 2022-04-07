@@ -242,7 +242,7 @@ classdef perfusion_rest < handle
             %%
             kspAll = permute(squeeze(kspAll), [1, 3, 5, 2, 4]);
             lambda1 = 0.010
-            for slices = 1:4
+            for slices = 1:1
                 [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
                 % slices = 1
                 coil_keep = 0;
@@ -354,6 +354,7 @@ classdef perfusion_rest < handle
                     param.VW = 'on';
                     param.TTVw = lambda1;
                     param.TPCAw = lambda1*0.5;
+                    %param.TPCAw = 0;
                     param.STVw = 0;
 
                     param.E = Emat_2DPERF( gpuArray(single(CS_mask2)), gpuArray(single(b1)) );
