@@ -2,7 +2,7 @@ classdef perfusion_rest < handle
     methods
         function process(obj, connection, config, metadata, logging)
             logging.info('Config: \n%s', config);
-            % addpath(genpath('/home/huiliyang/Desktop/Share/Nikolay/MatlabCode/'))
+
             % Metadata should be MRD formatted header, but may be a string
             % if it failed conversion earlier
             try
@@ -89,81 +89,20 @@ classdef perfusion_rest < handle
             
             %% preparing kspace
             kspAll = squeeze(twix_obj.imageData());
-            kspAll = permute(kspAll(:,1:8,:,1,end), [1,3,2]); %first 8 coils of the first slice of the last heartbeat
+            kspAll = permute(kspAll(:,:,:,1), [1,3,2]); %first slice of the last heartbeat
+            
+            %% oversampling reduction
             tmpKsp =fftshift(fft(fftshift(kspAll,1),[],1),1)/sqrt(size(kspAll,1));
             tmpKsp = tmpKsp(size(tmpKsp, 1)/4 + 1 : size(tmpKsp, 1)*3/4, :, :, :, :, :, :, :, :);
             kspAll = fftshift(ifft(fftshift(tmpKsp,1),[],1),1)*sqrt(size(tmpKsp,1));
-%             logging.info("Data is 'mapVBVD formatted' with dimensions:")  % Data is 'mapVBVD formatted' with dimensions:
-%             logging.info(sprintf('%s ', twix_obj.dataDims{1:10}))         % Col Cha Lin Par Sli Ave Phs Eco Rep Set
-%             logging.info(sprintf('%3d ', size(kspAll)))                   % 404  14 124   1   1   1   1   1   1  11
 
-            %%
-            %  Daming's code from here
-            %%
-           
-            kSpace_slc(:,:,1,:) = kspAll;
-            [Nx, Ny, Nt, Nc] = size(kSpace_slc);
-            CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
-            
-            for zz=1:size(CS_mask,2)
-                CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1; 
-            end
-            
-            
-            CS_mask2 = zeros(Nx,Ny,Nt);
-            
-            for i = 1:Nx
-                CS_mask2(i,:,:) = CS_mask;
-            end
-          
-            NumOfComp = Nc;
-                 
-            % clear tmp_data compressed_data coeff    
-            CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
-            
-            for zz=1:size(CS_mask,2)
-                CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1;
-            end
-            CS_mask2 = zeros(Nx,Ny,Nt);
-            for i = 1:Nx
-                CS_mask2(i,:,:) = CS_mask;
-            end
-            DC = squeeze( sum(kSpace_slc(:,:,1:end,:),3) );
-            SM=squeeze(sum(CS_mask2,3));
-            SM(find(SM==0))=1;
-            for ii = 1:NumOfComp
-                DC(:,:,ii)=DC(:,:,ii)./SM;    
-            end
-            %% stop prep
-            ref=ifft2c_mri(DC);
-                    % try without sense maps
-                    %ref = sum(ref,3);
-                     [dummy,b1]=adapt_array_2d_st2(ref);
-                     b1=b1/max( abs(b1(:)) );
- 
-         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-         % % iterative reconstruction
-                     param = struct();
-                     param.TPCA = TempPCA();
-                     param.TTV = TV_Temp();
-                     param.STV = TV_2DPERF();
-                     param.display = 1;
-                     param.VW = 'off';
-                     param.TTVw = 0;
-                     param.TPCAw = 0;
-                     param.STVw = 0;
- 
-                     param.E = Emat_2DPERF( gpuArray(single(CS_mask2)), gpuArray(single(b1)) );
-                     %recon the first image
-                     param.y = gpuArray(single( kSpace_slc ));
-                     Recon_CS_TTV_TPCA = gpuArray( param.E'*param.y );
-                     Recon_CS_TTV_TPCA_CoilCompGPU = gather(Recon_CS_TTV_TPCA);
- 
-                     recon_cs_total(:,:,:,1) = Recon_CS_TTV_TPCA_CoilCompGPU;
+           %% sum of squares iFFT recon
+            ref=ifft2c_mri(kspAll);
+            ref = sum(abs(ref),3);
             
             % image processing
             % TODO: export complex images
-            img = abs(recon_cs_total);
+            img = abs(ref);
             logging.debug("Image data is size %d x %d", size(img))
 
             % Normalize and convert to short (int16)
@@ -213,7 +152,6 @@ classdef perfusion_rest < handle
                     meta.InstanceNumber         = tm;
                     % set_attribute_string also updates attribute_string_len
                     image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
-
                     images{end+1} = image;
                 end
             end
@@ -242,7 +180,7 @@ classdef perfusion_rest < handle
             %%
             kspAll = permute(squeeze(kspAll), [1, 3, 5, 2, 4]);
             lambda1 = 0.010
-            for slices = 1:1
+            for slices = 1:4
                 [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
                 % slices = 1
                 coil_keep = 0;
