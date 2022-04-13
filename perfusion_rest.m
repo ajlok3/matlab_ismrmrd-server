@@ -2,7 +2,7 @@ classdef perfusion_rest < handle
     methods
         function process(obj, connection, config, metadata, logging)
             logging.info('Config: \n%s', config);
-
+            zf_counter = 0;
             % Metadata should be MRD formatted header, but may be a string
             % if it failed conversion earlier
             try
@@ -42,8 +42,10 @@ classdef perfusion_rest < handle
                         % When this criteria is met, run process_raw_zero_filled() on the accumulated
                         % data, which returns images that are sent back to the client.
                         if (item.head.flagIsSet(item.head.FLAGS.ACQ_LAST_IN_REPETITION))
-                            logging.info(sprintf("Processing a group of k-space data; %d items", length(acqGroup(end-131:end))))
-                            zero_filled = obj.process_raw_zero_filled(acqGroup(end-131:end), config, metadata, logging);
+                            group_length = length(acqGroup) - zf_counter;
+                            zf_counter = length(acqGroup);
+                            logging.info(sprintf("Processing a group of k-space data; %d items", length(acqGroup(end-group_length+1:end))))
+                            zero_filled = obj.process_raw_zero_filled(acqGroup(end-group_length+1:end), config, metadata, logging);
                             logging.debug("Sending zero-filled images to client")
                             connection.send_image(zero_filled);
                         end
@@ -128,7 +130,6 @@ classdef perfusion_rest < handle
                     % centerIdx = 1;
 
                     % Copy the relevant AcquisitionHeader fields to ImageHeader
-                    % image.head.fromAcqHead(group{centerIdx}.head);
                     image.head = image.head.fromAcqHead(group{centerIdx}.head);
                     
                     
@@ -180,8 +181,8 @@ classdef perfusion_rest < handle
             %%
             kspAll = permute(squeeze(kspAll), [1, 3, 5, 2, 4]);
             lambda1 = 0.010
-            for slices = 1:4
-                [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
+            [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
+            for slices = 1:Nslc
                 % slices = 1
                 coil_keep = 0;
                 Recon_CS_TTV_TPCA = [];
@@ -333,7 +334,7 @@ classdef perfusion_rest < handle
             % Normalize and convert to short (int16)
             img = img .* (32767./max(img(:)));
             img = int16(round(img));
-            img = rot90(img);
+            img = rot90(img, 2);
             % Invert image contrast
             % img = int16(abs(32767-img));
 
@@ -353,7 +354,7 @@ classdef perfusion_rest < handle
                     % centerIdx = 1;
 
                     % Copy the relevant AcquisitionHeader fields to ImageHeader
-                    image.head.fromAcqHead(group{centerIdx}.head);
+                    image.head = image.head.fromAcqHead(group{centerIdx}.head);
 
                     % field_of_view is mandatory
                     image.head.field_of_view  = single([metadata.encoding(1).reconSpace.fieldOfView_mm.x ...
