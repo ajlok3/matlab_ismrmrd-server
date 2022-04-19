@@ -91,7 +91,10 @@ classdef perfusion_rest < handle
             
             %% preparing kspace
             kspAll = squeeze(twix_obj.imageData());
-            kspAll = permute(kspAll(:,:,:,1), [1,3,2]); %first slice of the last heartbeat
+            if length(size(kspAll)) > 3
+                kspAll = kspAll(:,:,:,2); % take second slice, if more than one available
+            end
+            kspAll = permute(kspAll, [1,3,2]);
             
             %% oversampling reduction
             tmpKsp =fftshift(fft(fftshift(kspAll,1),[],1),1)/sqrt(size(kspAll,1));
@@ -151,6 +154,8 @@ classdef perfusion_rest < handle
                     meta.ImageRowDir            = group{centerIdx}.head.read_dir;
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
+                    meta.SeriesDescription      = 'ZF_perfusion_FIRE';
+                    
                     % set_attribute_string also updates attribute_string_len
                     image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
                     images{end+1} = image;
@@ -374,6 +379,11 @@ classdef perfusion_rest < handle
                     meta.ImageRowDir            = group{centerIdx}.head.read_dir;
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
+                    seriesDesc = metadata.measurementInformation.protocolName;
+                    if tm == 1
+                        seriesDesc = strcat('AIF_', seriesDesc);
+                    end
+                    meta.SeriesDescription      = seriesDesc;
                     % set_attribute_string also updates attribute_string_len
                     image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
 
