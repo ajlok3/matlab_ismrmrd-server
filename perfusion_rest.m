@@ -154,7 +154,8 @@ classdef perfusion_rest < handle
                     meta.ImageRowDir            = group{centerIdx}.head.read_dir;
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
-                    meta.SeriesDescription      = 'ZF_perfusion_FIRE';
+                    meta.ImageComments          = 'ZF_recon';
+                    meta.SiemensControl_SkipSaveOnHost = {{'bool', 'true'}};
                     
                     % set_attribute_string also updates attribute_string_len
                     image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
@@ -379,11 +380,14 @@ classdef perfusion_rest < handle
                     meta.ImageRowDir            = group{centerIdx}.head.read_dir;
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
-                    seriesDesc = metadata.measurementInformation.protocolName;
+                    meta.ImageComments = metadata.measurementInformation.protocolName;
                     if tm == 1
-                        seriesDesc = strcat('AIF_', seriesDesc);
+                        meta.SequenceDescriptionAdditional      = '_AIF';
+                        meta.ImageComments = strcat(meta.ImageComments, '_AIF');
                     end
-                    meta.SeriesDescription      = seriesDesc;
+                   
+                    
+                    
                     % set_attribute_string also updates attribute_string_len
                     image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
 
