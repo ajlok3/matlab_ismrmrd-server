@@ -196,7 +196,9 @@ classdef perfusion_rest < handle
                 clear kspTmp
             end
             kspAll = permute(kspAll, [1, 3, 5, 2, 4]);
-            lambda1 = 0.010
+            lambda1 = 0.010;
+            N_PD = 9;
+            
             [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
             for slices = 1:Nslc
                 % slices = 1
@@ -204,23 +206,19 @@ classdef perfusion_rest < handle
                 Recon_CS_TTV_TPCA = [];
                 kSpace_slc = kspAll(:,:,:,:,slices);
 
-                % stack slices along the time dimension
-                %kSpace_slc = permute(reshape(permute(kspAll, [1,2,4,3,5]), Nx, Ny, Nc, Nt*Nslc), [1,2,4,3]);
-
                 % detecting noisy coils
                 CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
                 for zz=1:size(CS_mask,2)
                     CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1;
                 end
-                acc=size(kSpace_slc,2)*size(kSpace_slc,3)/sum(CS_mask(:));
+                
                 CS_mask2 = zeros(Nx,Ny,Nt);
-                % all slices version
-                % CS_mask2 = zeros(Nx, Ny, Nt*Nslc);
+                
                 for i = 1:Nx
                     CS_mask2(i,:,:) = CS_mask;
                 end
-
-                    count = 1;
+                
+                count = 1;
                 for coil = 1:Nc
                     kSpace_tmp = squeeze(kspAll(:,:,1,coil,1)).*squeeze(CS_mask2(:,:,1));
                     [col,row,kSpace_new] = find(abs(kSpace_tmp));
@@ -238,8 +236,6 @@ classdef perfusion_rest < handle
 
 
                 kSpace_slc = kspAll(:,:,:,coil_keep, slices);
-                % all slices version
-                % kSpace_slc = kSpace_slc(:,:,:,coil_keep);
                 [Nx, Ny, Nt, Nc] = size(kSpace_slc);
 
                  % % Coil Compression: PCA 8
@@ -260,27 +256,25 @@ classdef perfusion_rest < handle
 
 
 
-        % % scaling PD scans: 2 PD and then 63 T1w images 
-                    t1w = squeeze(kSpace_slc(:,:,end,:));
-                    pd = squeeze(kSpace_slc(:,:,1,:));
+                    % move PD to the end and scaling PD scans
+                    kSpace_slc_temp = kSpace_slc(:,:,[N_PD+1:Nt,1:N_PD],:);
+                    clear kSpace_slc;
+                    kSpace_slc = kSpace_slc_temp;
+                    t1w = squeeze(kSpace_slc(:,:,Nt-N_PD,:));
+                    pd = squeeze(kSpace_slc(:,:,Nt-N_PD+1,:));
                     tmp_sort_t1w = sort( abs(t1w(:)), 'descend' );
                     tmp_sort_pd = sort( abs(pd(:)), 'descend' );
-        % % %             max_ratio = tmp_sort_pd(1)/tmp_sort_t1w(1)
                     mean_t1w = mean(tmp_sort_t1w(1:round(length(t1w(:))*1)));
                     mean_pd = mean(tmp_sort_pd(1:round(length(pd(:))*1)));
                     max_ratio = mean_pd/mean_t1w
-                    kSpace_slc(:,:,1:2,:) = abs(kSpace_slc(:,:,1:2,:))./max_ratio.*exp(1i*angle(kSpace_slc(:,:,1:2,:))); 
+                    kSpace_slc(:,:,Nt-N_PD+1:Nt,:) = kSpace_slc(:,:,Nt-N_PD+1:Nt,:)./max_ratio;
+                    % move PD to the end and scaling PD scans
 
                     CS_mask=zeros(size(kSpace_slc,2),size(kSpace_slc,3));
                     for zz=1:size(CS_mask,2)
                         CS_mask(find(kSpace_slc(size(kSpace_slc,1)/2+1,:,zz,1)),zz)=1;
                     end
-                    acc=size(kSpace_slc,2)*size(kSpace_slc,3)/sum(CS_mask(:));
-                    %raw data normalization
-        %             aux=ifft2c_mri(kSpace_slc);
-        %             sf=max( abs(aux(:)) );
-        %             aux=aux/sf;
-        %             kSpace_slc=fft2c_mri(aux);
+                    
                     CS_mask2 = zeros(Nx,Ny,Nt);
                     for i = 1:Nx
                         CS_mask2(i,:,:) = CS_mask;
@@ -325,22 +319,11 @@ classdef perfusion_rest < handle
                     for ite = 1:ITER
                         disp( [ sprintf( 'iteration = %2d', ite )] )
                         Recon_CS_TTV_TPCA = CSL1NlCg_TTV_TPCA_STV_VW_gpuArray( Recon_CS_TTV_TPCA, param );
-
-                        Recon_CS_TTV_TPCA_CoilCompGPU = gather( Recon_CS_TTV_TPCA );
-
-                        if ite >= ITER 
-                            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-                            % % scaling BACK
-                             Recon_CS_TTV_TPCA_CoilCompGPU(:,:,1:2) = abs(Recon_CS_TTV_TPCA_CoilCompGPU(:,:,1:2)).*max_ratio.*exp(1i*angle(Recon_CS_TTV_TPCA_CoilCompGPU(:,:,1:2)));
-% 
-%                             nx = size(Recon_CS_TTV_TPCA_CoilCompGPU,1);
-%                             ranges = nx/2-nx/4+1 : nx/2+nx/4;
-% 
-%                             Recon_CS_TTV_TPCA_CoilCompGPU = Recon_CS_TTV_TPCA_CoilCompGPU(ranges,:,:);
-                        end
                     end
-
-                recon_cs_total(:,:,:,slices) = Recon_CS_TTV_TPCA_CoilCompGPU;
+                    Recon_CS_TTV_TPCA_CoilCompGPU = gather( Recon_CS_TTV_TPCA );
+                    % % scaling BACK
+                    Recon_CS_TTV_TPCA_CoilCompGPU(:,:,Nt-N_PD+1:Nt) = Recon_CS_TTV_TPCA_CoilCompGPU(:,:,Nt-N_PD+1:Nt).*max_ratio;
+                    recon_cs_total(:,:,:,slices) = Recon_CS_TTV_TPCA_CoilCompGPU(:,:,[Nt-N_PD+1:Nt,1:Nt-N_PD]);
             end
             % image processing
             % TODO: export complex images
@@ -351,8 +334,6 @@ classdef perfusion_rest < handle
             img = img .* (32767./max(img(:)));
             img = int16(round(img));
             img = rot90(img, 2);
-            % Invert image contrast
-            % img = int16(abs(32767-img));
 
             % Format as ISMRMRD image data
             % TODO: send back slice by slice
