@@ -3,6 +3,7 @@ classdef perfusion_rest < handle
         function process(obj, connection, config, metadata, logging)
             logging.info('Config: \n%s', config);
             zf_counter = 0;
+            rep_counter = 0;
             % Metadata should be MRD formatted header, but may be a string
             % if it failed conversion earlier
             try
@@ -42,12 +43,15 @@ classdef perfusion_rest < handle
                         % When this criteria is met, run process_raw_zero_filled() on the accumulated
                         % data, which returns images that are sent back to the client.
                         if (item.head.flagIsSet(item.head.FLAGS.ACQ_LAST_IN_REPETITION))
-                            group_length = length(acqGroup) - zf_counter;
-                            zf_counter = length(acqGroup);
-                            logging.info(sprintf("Processing a group of k-space data; %d items", length(acqGroup(end-group_length+1:end))))
-                            zero_filled = obj.process_raw_zero_filled(acqGroup(end-group_length+1:end), config, metadata, logging);
-                            logging.debug("Sending zero-filled images to client")
-                            connection.send_image(zero_filled);
+                            rep_counter = rep_counter + 1;
+                            if mod(rep_counter, 2) == 0
+                                group_length = length(acqGroup) - zf_counter;
+                                zf_counter = length(acqGroup);
+                                logging.info(sprintf("Processing a group of k-space data; %d items", length(acqGroup(end-group_length+1:end))))
+                                zero_filled = obj.process_raw_zero_filled(acqGroup(end-group_length+1:end), config, metadata, logging);
+                                logging.debug("Sending zero-filled images to client")
+                                connection.send_image(zero_filled);
+                            end
                         end
 
                     elseif isempty(item)
@@ -155,8 +159,8 @@ classdef perfusion_rest < handle
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
                     meta.ImageComments          = 'ZF_recon';
-                    meta.SiemensControl_SkipSaveOnHost = {{'bool', 'true'}};
-                    
+                    meta.SiemensControl_SkipSaveOnHost = {'bool', 'true'};
+                                        
                     % set_attribute_string also updates attribute_string_len
                     image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
                     images{end+1} = image;
@@ -185,7 +189,13 @@ classdef perfusion_rest < handle
             %%
             %  Daming's code from here
             %%
-            kspAll = permute(squeeze(kspAll), [1, 3, 5, 2, 4]);
+            kspAll = squeeze(kspAll);
+            if length(size(kspAll)) < 5
+                kspTmp(:,:,:,1,:) = kspAll;
+                kspAll = kspTmp;
+                clear kspTmp
+            end
+            kspAll = permute(kspAll, [1, 3, 5, 2, 4]);
             lambda1 = 0.010
             [Nx, Ny, Nt, Nc, Nslc] = size(kspAll);
             for slices = 1:Nslc
@@ -381,7 +391,7 @@ classdef perfusion_rest < handle
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
                     meta.ImageComments = metadata.measurementInformation.protocolName;
-                    if tm == 1
+                    if sl == 1
                         meta.SequenceDescriptionAdditional      = '_AIF';
                         meta.ImageComments = strcat(meta.ImageComments, '_AIF');
                     end
