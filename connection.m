@@ -2,17 +2,49 @@ classdef connection < handle
     properties
         tcpHandle
         log
+        savedata = false
+        savedataFile = ''
+        savedataFolder = ''
+        savedataGroup = 'dataset'
+        dset = NaN
+        dsetcreated = false
     end
 
     methods
         % ----------------------------------------------------------------------
         %      TCP/IP connection handling functions
         % ----------------------------------------------------------------------
-        function obj = connection(tcpHandle, log)
+        function obj = connection(tcpHandle, log, savedata, savedataFile, savedataFolder)
             obj.tcpHandle = tcpHandle;
             obj.log       = log;
+            obj.savedata  = savedata;
+            obj.savedataFile = savedataFile;
+            obj.savedataFolder = savedataFolder;
         end
-
+        
+        function create_save_file(obj, seq_name)
+            if nargin < 2
+                seq_name = '';
+            end
+            if obj.savedata == true
+               if not(isfolder(obj.savedataFolder))
+                   mkdir(obj.savedataFolder);
+                   obj.log.info('Created folder %s to save incoming data', obj.savedataFolder);
+               end
+               if length(obj.savedataFile) > 1
+                   mrdFilePath = obj.savedataFile;
+               elseif ~strcmp(seq_name,'')
+                   mrdFilePath = strcat(obj.savedataFolder, 'MRD_', seq_name, '_', datestr(datetime('now'), 'yyyy-mm-dd_HH:MM:SS'),'.h5');
+               else
+                   mrdFilePath = strcat(obj.savedataFolder, 'MRD_input_', datestr(datetime('now'), 'yyyy-mm-dd_HH:MM:SS'),'.h5');
+               end
+               obj.log.info('Incoming data will be saved to: %s in group %s', mrdFilePath, obj.savedataGroup);
+               obj.dset = ismrmrd.Dataset(mrdFilePath, obj.savedataGroup);
+               
+            end
+            obj.dsetcreated = true;
+        end
+        
         function out = read(obj,length)
             if (length == 0)
                 out = [];
@@ -138,6 +170,14 @@ classdef connection < handle
             length = typecast(read(obj,constants.SIZEOF_MRD_MESSAGE_LENGTH), 'uint32');
             metadata_bytes = read(obj, length);
             metadata = strtok(char(metadata_bytes)', char(0));
+            serialized_meta = ismrmrd.xml.deserialize(metadata);
+            if obj.savedata
+                if ~obj.dsetcreated
+                    obj.create_save_file(serialized_meta.measurementInformation.protocolName);
+                end
+                obj.log.debug("Saving XML header to file")
+                obj.dset.writexml(metadata);
+            end
         end
 
         % ----- MRD_MESSAGE_CLOSE (4) ------------------------------------------
@@ -153,6 +193,14 @@ classdef connection < handle
         function out = read_close(obj)
             obj.log.info("<-- Received MRD_MESSAGE_CLOSE (4)")
             out = [];
+            if obj.savedata
+                if ~obj.dsetcreated
+                    obj.create_save_file();
+                end
+                obj.log.debug("Closing file.")
+                obj.dset.close();
+                obj.dsetcreated = false;
+            end       
         end
 
         % ----- MRD_MESSAGE_TEXT (5) -------------------------------------------
@@ -216,6 +264,13 @@ classdef connection < handle
             data = complex(data(1:2:end), data(2:2:end));
 
             out = ismrmrd.Acquisition(header, traj, data);
+            if obj.savedata
+                if ~obj.dsetcreated
+                    obj.create_save_file();
+                end
+                obj.dset.appendAcquisition(out);
+            end
+                    
         end
 
         % ----- MRD_MESSAGE_ISMRMRD_IMAGE (1022) -------------------------------
