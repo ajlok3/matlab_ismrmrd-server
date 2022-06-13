@@ -190,8 +190,8 @@ disp('Coil sens map...');
         param.Slice = SLC;
 
         % % GPU mode
-        param.E = Emat_2DPERF( single(CS_mask), single(CoilSens) );
-        param.y = single(kSpace_SLC);
+        param.E = Emat_2DPERF( gpuArray(single(CS_mask)), gpuArray(single(CoilSens)));
+        param.y = gpuArray(single(kSpace_SLC));
         
         ITER = 4;
         param.VW = 'on';

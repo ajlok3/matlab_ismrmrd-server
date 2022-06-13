@@ -310,7 +310,6 @@ classdef perfusion_rest < handle
                     %recon the first image
                     param.y = gpuArray(single( kSpace_slc ));
                     Recon_CS_TTV_TPCA = gpuArray( param.E'*param.y );
-                    Recon_CS_TTV_TPCA_CoilCompGPU = gather(Recon_CS_TTV_TPCA);
 
                     param.block_size = 8;
                     param.tau_size = 0.15;
