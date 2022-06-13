@@ -44,7 +44,7 @@ classdef server < handle
 
         function handle(obj)
             try
-                conn = connection(obj.tcpHandle, obj.log);
+                conn = connection(obj.tcpHandle, obj.log, true, '', '/tmp/rawdata/');
                 config = next(conn);
                 metadata = next(conn);
 
@@ -71,6 +71,9 @@ classdef server < handle
                 elseif strcmpi(config, "perfusion_rest")
                     obj.log.info("Starting perfusion_rest processing based on config")
                     recon = perfusion_rest;
+                elseif strcmpi(config, "cine_flash_cartesian")
+                    obj.log.info("Starting cine_flash_cartesian processing based on config")
+                    recon = cine_flash_cartesian;
                 else
                     if exist(config, 'class')
                         obj.log.info("Starting %s processing based on config", config)
