@@ -343,7 +343,7 @@ classdef perfusion_rest < handle
 
                     % Find the center k-space index
                     % TODO: fix center Idx
-                    centerIdx = find((twix_obj.Lin == twix_obj.centerLin) & (twix_obj.Sli == sl), 1);
+                    centerIdx = find((twix_obj.Lin == twix_obj.centerLin) & (twix_obj.Sli == sl) & (twix_obj.Rep == tm), 1);
                     if isempty(centerIdx)
                         warning('Could not find center k-space readout')
                         centerIdx = 1;
