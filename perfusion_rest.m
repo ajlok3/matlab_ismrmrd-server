@@ -107,7 +107,7 @@ classdef perfusion_rest < handle
 
            %% sum of squares iFFT recon
             ref=ifft2c_mri(kspAll);
-            ref = sum(abs(ref),3);
+            ref = sum(abs(ref),3);  
             
             % image processing
             % TODO: export complex images
