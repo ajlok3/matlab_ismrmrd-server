@@ -148,9 +148,9 @@ classdef radial_perfusion < handle
                     end
             end
 
-            param.E = MCNUFFT_2D_GPU_kxyt_single( ku, wu, ones(nx,nx,nc) );       
+            param.E = MCNUFFT_2D_GPU_kxyt_single(ku, wu, ones(nx,nx,nc));       
             param.y = tmp_kSpace;
-            NUFFT_CoilSens = squeeze( param.E'*param.y );
+            NUFFT_CoilSens = squeeze( param.E'*param.y);
             ref = sum(abs(NUFFT_CoilSens),3);
             
             % image processing
@@ -161,7 +161,7 @@ classdef radial_perfusion < handle
             % Normalize and convert to short (int16)
             img = img .* (32767./max(img(:)));
             img = int16(round(img));
-            img = rot90(img, 2);
+            img = rot90(img, 2)';
             % Invert image contrast
             % img = int16(abs(32767-img));
 
@@ -429,7 +429,7 @@ classdef radial_perfusion < handle
             % Normalize and convert to short (int16)
             img = img .* (32767./max(img(:)));
             img = int16(round(img));
-            img = rot90(img, 2);
+            img = permute(rot90(img,2), [2, 1, 3:length(size(img))]);
 
             % Format as ISMRMRD image data
             % TODO: send back slice by slice
