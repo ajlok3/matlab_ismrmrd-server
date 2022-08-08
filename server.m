@@ -38,7 +38,7 @@ classdef server < handle
 
                     obj.log.error(sprintf('%s\nError in %s (%s) (line %d)', ME.message, ME.stack(1).('name'), ME.stack(1).('file'), ME.stack(1).('line')));
                 end
-                pause(1)
+                %pause(1)
             end
         end
 
