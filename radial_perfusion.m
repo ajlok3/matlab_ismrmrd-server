@@ -252,34 +252,36 @@ classdef radial_perfusion < handle
             % param.AngleRange :  1) '-H' for [0,180)
             %                     2) '-G' for [0,360)
             kSpace_TF = kSpace(:,1:end,:,1:end-2,:);
-            [nx,ny,nz,nt,nc] = size(kSpace_TF);
+            %[nx,ny,nz,nt,nc] = size(kSpace_TF);
             angle_3_TF = angle_3(1:end,1:end-2);
             
-            for iz = 1:nz
-            clear tmp_kSpace kSpace_SLC tmp_angle
-            kSpace_SLC = squeeze(kSpace_TF(:,:,iz,:,:));
-            tmp_kSpace = reshape( kSpace_SLC, [nx, ny*nt, nc] );
-            tmp_angle = col(angle_3_TF);
-
-            Option_SLC.Indexes = (ny*nt+1-600):ny*nt;  % last 600 rays
-            Option_SLC.N = 5;
-            Option_SLC.AngleRange = '-G';
-            Option_SLC.Angles = tmp_angle;
-            if isfield( Option_SLC, 'PC_coeff' )
-               Option_SLC = rmfield( Option_SLC, 'PC_coeff' );
-            end
-            disp( 'Trajectory correction (RING)...' )
-            Option_SLC.PC_coeff = RING_TrajCorrCoefficient( tmp_kSpace, Option_SLC );
-            Option_SLC.PhaseCorrection = 'UseTC';
-            PCcorrected = RadialTrajCorrection_WithRING( kSpace_SLC, kSpace_SLC, Option_SLC );
-            kSpace_SLC = PCcorrected.kSpace;
-            clear PCcorrected
-            kSpace_tc_TF(:,:,iz,:,:) = kSpace_SLC;
-            end    
+%             for iz = 1:nz
+%             clear tmp_kSpace kSpace_SLC tmp_angle
+%             kSpace_SLC = squeeze(kSpace_TF(:,:,iz,:,:));
+%             tmp_kSpace = reshape( kSpace_SLC, [nx, ny*nt, nc] );
+%             tmp_angle = col(angle_3_TF);
+% 
+%             Option_SLC.Indexes = (ny*nt+1-600):ny*nt;  % last 600 rays
+%             Option_SLC.N = 5;
+%             Option_SLC.AngleRange = '-G';
+%             Option_SLC.Angles = tmp_angle;
+%             if isfield( Option_SLC, 'PC_coeff' )
+%                Option_SLC = rmfield( Option_SLC, 'PC_coeff' );
+%             end
+%             disp( 'Trajectory correction (RING)...' )
+%             Option_SLC.PC_coeff = RING_TrajCorrCoefficient( tmp_kSpace, Option_SLC );
+%             Option_SLC.PhaseCorrection = 'UseTC';
+%             PCcorrected = RadialTrajCorrection_WithRING( kSpace_SLC, kSpace_SLC, Option_SLC );
+%             kSpace_SLC = PCcorrected.kSpace;
+%             clear PCcorrected
+%             kSpace_tc_TF(:,:,iz,:,:) = kSpace_SLC;
+%             end    
 
             % kSpace_new(:,15:42,:,:,:) = kSpace_tc_TF;
-            kSpace_new = kSpace_tc_TF;
-            angle_3_new = angle_3;
+%             kSpace_new = kSpace_tc_TF;
+%             angle_3_new = angle_3;
+            kSpace_new = kSpace_TF;
+            angle_3_new = angle_3_TF;
             %%
             clear kSpace angle_3
             % clear kSpace
@@ -288,7 +290,7 @@ classdef radial_perfusion < handle
             %kSpace = kSpace_new(:,1:ny,:,:,[2:10,13,15,16,19,21,23,24,26:30]); %% slcie 1/2/3
 
 
-            angle_3 = angle_3_new(1:ny,1:end-2);
+            angle_3 = angle_3_new; %(1:ny,1:end-2);
 
             [nx,ny,nz,nt,nc] = size(kSpace);
             if ccFlag == 1
