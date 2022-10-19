@@ -1,4 +1,8 @@
 classdef radial_perfusion < handle
+    properties
+        dcf_global = 0
+    end
+    
     methods
         function process(obj, connection, config, metadata, logging)
             logging.info('Config: \n%s', config);
@@ -44,10 +48,13 @@ classdef radial_perfusion < handle
                         if (item.head.flagIsSet(item.head.FLAGS.ACQ_LAST_IN_REPETITION))
                             rep_counter = rep_counter + 1;
                             if mod(rep_counter, 2) == 0
+                               
                                 group_length = length(acqGroup) - zf_counter;
                                 zf_counter = length(acqGroup);
                                 logging.info(sprintf("Processing a group of k-space data; %d items", length(acqGroup(end-group_length+1:end))))
+                                
                                 zero_filled = obj.process_raw_zero_filled(acqGroup(end-group_length+1:end), config, metadata, logging);
+                                
                                 logging.debug("Sending zero-filled images to client")
                                 connection.send_image(zero_filled);
                             end
@@ -81,6 +88,7 @@ classdef radial_perfusion < handle
         
         % Process a set of raw k-space data and return the zero-filled image
         function images = process_raw_zero_filled(obj, group, config, metadata, logging)
+            
             %% parameter setting
             AdvDCFb1 = 1;
             
@@ -95,9 +103,7 @@ classdef radial_perfusion < handle
             twix_obj.Rep = twix_obj.Rep - min(twix_obj.Rep) + 1;
            
             kspAll = twix_obj.imageData();
-%             tmpKsp =fftshift(fft(fftshift(kspAll,1),[],1),1)/sqrt(size(kspAll,1));
-%             tmpKsp = tmpKsp(size(tmpKsp, 1)/4 + 1 : size(tmpKsp, 1)*3/4, :, :, :, :, :, :, :, :);
-%             kspAll = fftshift(ifft(fftshift(tmpKsp,1),[],1),1)*sqrt(size(tmpKsp,1));
+
             logging.info("Data is 'mapVBVD formatted' with dimensions:")  % Data is 'mapVBVD formatted' with dimensions:
             logging.info(sprintf('%s ', twix_obj.dataDims{1:10}))         % Col Cha Lin Par Sli Ave Phs Eco Rep Set
             logging.info(sprintf('%3d ', size(kspAll)))                   % 404  14 124   1   1   1   1   1   1  11
@@ -122,9 +128,7 @@ classdef radial_perfusion < handle
             
             kSpace_SLC = squeeze(kSpace(:,:,iz,:,:));
             clear tmp_kSpace  tmp_angleinfo  ray_index  recon_nufft 
-            ray_index = 1:ny;
-            tmp_angleinfo = [];
-            tmp_kSpace = [];
+            
             tmp_kSpace = reshape( kSpace_SLC, [nx, ny*nt, nc] );
             tmp_angleinfo = col( angle_3 );
 
@@ -135,24 +139,32 @@ classdef radial_perfusion < handle
             end
             ku = 1i.*(-real(ray_info)) - imag(ray_info);
             sel_DCF = 2;   % 1 = standard DCF % 2 = new DCF
-            switch sel_DCF
-                case 1
-                     wu = abs( ku )./max(abs(ku(:)));
-                case 2
-                    Option.Nsamples = nx;
-                    Option.AnglePrecision = 4;   % full precision
-                    Option.Display = 0;
-                    Option.WeightedContrast = 0;
-                    if AdvDCFb1 == 1
-                       wu = AdvancedDCF_2DRadial( tmp_angleinfo, Option );
-                    end
+            if obj.dcf_global == 0
+                switch sel_DCF
+                    case 1
+                        %wu = ones(size(ku));
+                        wu = abs( ku )./max(abs(ku(:)))+1e-08*ones(size(ku));
+                    case 2
+                        Option.Nsamples = nx;
+                        Option.AnglePrecision = 4;   % full precision
+                        Option.Display = 0;
+                        Option.WeightedContrast = 0;
+                        if AdvDCFb1 == 1
+                           wu = AdvancedDCF_2DRadial( tmp_angleinfo, Option );
+                        end
+                end
+                obj.dcf_global = wu;
+            else
+                wu = obj.dcf_global;
             end
-
             param.E = MCNUFFT_2D_GPU_kxyt_single(ku, wu, ones(nx,nx,nc));       
             param.y = tmp_kSpace;
-            NUFFT_CoilSens = squeeze( param.E'*param.y);
-            ref = sum(abs(NUFFT_CoilSens),3);
             
+            NUFFT_CoilSens = squeeze( param.E'*param.y);
+           
+            ref = sum(abs(NUFFT_CoilSens),3);
+            [imx, imy] = size(ref);
+            ref = ref(imx/4+1:3*imx/4, imy/4+1:3*imy/4);
             % image processing
             % TODO: export complex images
             img = abs(ref);
@@ -170,41 +182,42 @@ classdef radial_perfusion < handle
             image = ismrmrd.Image(img);
 
             % Find the center k-space index
-            centerIdx = find((twix_obj.Lin == twix_obj.centerLin) & (twix_obj.Sli == iz), 1);
-            if isempty(centerIdx)
-                warning('Could not find center k-space readout')
-                centerIdx = 1;
-            end
-
-            % Copy the relevant AcquisitionHeader fields to ImageHeader
-            image.head = image.head.fromAcqHead(group{centerIdx}.head);
-
-
-            % field_of_view is mandatory
-            image.head.field_of_view  = single([metadata.encoding(1).reconSpace.fieldOfView_mm.x ...
-                                                metadata.encoding(1).reconSpace.fieldOfView_mm.y ...
-                                                metadata.encoding(1).reconSpace.fieldOfView_mm.z]);
-
-            % calib data ==> series index 0                                
-            image.head.image_series_index = 0;
-            image.head.image_index = 0;
-
-            % Set ISMRMRD Meta Attributes
-            meta = struct;
-            meta.DataRole               = 'Image';
-            meta.ImageProcessingHistory = 'MATLAB';
-            meta.WindowCenter           = uint16(16384);
-            meta.WindowWidth            = uint16(32768);
-            meta.ImageRowDir            = group{centerIdx}.head.read_dir;
-            meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
-            meta.InstanceNumber         = 0;
-            meta.ImageComments          = 'ZF_recon';
-            meta.SiemensControl_SkipSaveOnHost = {'bool', 'true'};
-
-            % set_attribute_string also updates attribute_string_len
+             centerIdx = find((twix_obj.Lin == twix_obj.centerLin) & (twix_obj.Sli == iz), 1);
+             if isempty(centerIdx)
+                 warning('Could not find center k-space readout')
+                 centerIdx = 1;
+             end
+ 
+             % Copy the relevant AcquisitionHeader fields to ImageHeader
+             image.head = image.head.fromAcqHead(group{centerIdx}.head);
+ 
+ 
+             % field_of_view is mandatory
+             image.head.field_of_view  = single([metadata.encoding(1).reconSpace.fieldOfView_mm.x ...
+                                                 metadata.encoding(1).reconSpace.fieldOfView_mm.y ...
+                                                 metadata.encoding(1).reconSpace.fieldOfView_mm.z]);
+ 
+             % calib data ==> series index 0                                
+             image.head.image_series_index = 0;
+             image.head.image_index = 0;
+ 
+             % Set ISMRMRD Meta Attributes
+             meta = struct;
+             meta.DataRole               = 'Image';
+             meta.ImageProcessingHistory = 'MATLAB';
+             meta.WindowCenter           = uint16(16384);
+             meta.WindowWidth            = uint16(32768);
+             meta.ImageRowDir            = group{centerIdx}.head.read_dir;
+             meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
+             meta.InstanceNumber         = 0;
+             meta.ImageComments          = 'ZF_recon';
+             meta.SiemensControl_SkipSaveOnHost = {'bool', 'true'};
+ 
+%             % set_attribute_string also updates attribute_string_len
             image = image.set_attribute_string(ismrmrd.Meta.serialize(meta));
             images{end+1} = image;
             logging.info(sprintf('Reconstructed %d zero-filled images', numel(images)))
+            
         end
 
 
@@ -252,36 +265,34 @@ classdef radial_perfusion < handle
             % param.AngleRange :  1) '-H' for [0,180)
             %                     2) '-G' for [0,360)
             kSpace_TF = kSpace(:,1:end,:,1:end-2,:);
-            %[nx,ny,nz,nt,nc] = size(kSpace_TF);
+            [nx,ny,nz,nt,nc] = size(kSpace_TF);
             angle_3_TF = angle_3(1:end,1:end-2);
-            
-%             for iz = 1:nz
-%             clear tmp_kSpace kSpace_SLC tmp_angle
-%             kSpace_SLC = squeeze(kSpace_TF(:,:,iz,:,:));
-%             tmp_kSpace = reshape( kSpace_SLC, [nx, ny*nt, nc] );
-%             tmp_angle = col(angle_3_TF);
-% 
-%             Option_SLC.Indexes = (ny*nt+1-600):ny*nt;  % last 600 rays
-%             Option_SLC.N = 5;
-%             Option_SLC.AngleRange = '-G';
-%             Option_SLC.Angles = tmp_angle;
-%             if isfield( Option_SLC, 'PC_coeff' )
-%                Option_SLC = rmfield( Option_SLC, 'PC_coeff' );
-%             end
-%             disp( 'Trajectory correction (RING)...' )
-%             Option_SLC.PC_coeff = RING_TrajCorrCoefficient( tmp_kSpace, Option_SLC );
-%             Option_SLC.PhaseCorrection = 'UseTC';
-%             PCcorrected = RadialTrajCorrection_WithRING( kSpace_SLC, kSpace_SLC, Option_SLC );
-%             kSpace_SLC = PCcorrected.kSpace;
-%             clear PCcorrected
-%             kSpace_tc_TF(:,:,iz,:,:) = kSpace_SLC;
-%             end    
-
-            % kSpace_new(:,15:42,:,:,:) = kSpace_tc_TF;
-%             kSpace_new = kSpace_tc_TF;
-%             angle_3_new = angle_3;
-            kSpace_new = kSpace_TF;
-            angle_3_new = angle_3_TF;
+           
+             for iz = 1:nz
+             clear tmp_kSpace kSpace_SLC tmp_angle
+             kSpace_SLC = squeeze(kSpace_TF(:,:,iz,:,:));
+             tmp_kSpace = reshape( kSpace_SLC, [nx, ny*nt, nc] );
+             tmp_angle = col(angle_3_TF);
+             first_index = max(1, ny*nt+1-600);
+             Option_SLC.Indexes = first_index:ny*nt;  % last 600 rays
+             Option_SLC.N = 5;
+             Option_SLC.AngleRange = '-G';
+             Option_SLC.Angles = tmp_angle;
+             if isfield( Option_SLC, 'PC_coeff' )
+                Option_SLC = rmfield( Option_SLC, 'PC_coeff' );
+             end
+             disp( 'Trajectory correction (RING)...' )
+             Option_SLC.PC_coeff = RING_TrajCorrCoefficient( tmp_kSpace, Option_SLC );
+             Option_SLC.PhaseCorrection = 'UseTC';
+             PCcorrected = RadialTrajCorrection_WithRING( kSpace_SLC, kSpace_SLC, Option_SLC );
+             kSpace_SLC = PCcorrected.kSpace;
+             clear PCcorrected
+             kSpace_tc_TF(:,:,iz,:,:) = kSpace_SLC;
+             end
+             
+             % kSpace_new(:,15:42,:,:,:) = kSpace_tc_TF;
+             kSpace_new = kSpace_tc_TF;     
+            angle_3_new = angle_3;
             %%
             clear kSpace angle_3
             % clear kSpace
@@ -290,7 +301,7 @@ classdef radial_perfusion < handle
             %kSpace = kSpace_new(:,1:ny,:,:,[2:10,13,15,16,19,21,23,24,26:30]); %% slcie 1/2/3
 
 
-            angle_3 = angle_3_new; %(1:ny,1:end-2);
+            angle_3 = angle_3_new(1:ny,1:end-2);
 
             [nx,ny,nz,nt,nc] = size(kSpace);
             if ccFlag == 1
@@ -370,8 +381,20 @@ classdef radial_perfusion < handle
             [nx, ny, nz, nt, nc]=size(kSpace);
             %%
             half_width = 3; % half_width_test(wid);
-            WeightedContrast = ones( nx, ny, nt);
-            hourglass_filt_mask_use = WeightedContrast;
+            WeightedContrast_PD = ones( nx, ny, 6);
+            WeightedContrast_PD(nx/2-half_width+1:nx/2+half_width+1,[2:9],:) = 0;
+            WeightedContrast_PD(nx/2-half_width:nx/2+half_width+2,10,:) = 0;
+            WeightedContrast_PD(nx/2-half_width-4:nx/2+half_width+6,[11:ny],:) = 0;
+
+            WeightedContrast_T1 = ones( nx, ny, nt-6);
+
+            WeightedContrast_T1(nx/2-half_width+1:nx/2+half_width+1,[6:9],:) = 0;
+            WeightedContrast_T1(nx/2-half_width:nx/2+half_width+2,10,:) = 0;
+            WeightedContrast_T1(nx/2-half_width-4:nx/2+half_width+6,[11:ny],:) = 0;
+            WeightedContrast_T1(:,:,:) = fliplr(WeightedContrast_T1(:,:,:));
+
+            hourglass_filt_mask_use(:,:,1:6) = WeightedContrast_PD;
+            hourglass_filt_mask_use(:,:,7:nt) = WeightedContrast_T1;
 
             %% CS recon
             for iz = 1:nz
@@ -401,7 +424,7 @@ classdef radial_perfusion < handle
                 param.y = permute(tmp_kSpace, [1,2,4,3]);
                 Recon_RadPerf_grid = param.E'*param.y;
 
-                Weight = 0.005;
+                Weight = 0.01;
                 param.TV = TV_Temp();
                 times_TV = 1;
                 param.TVw = Weight*times_TV;%.*max(abs(dummy1(:)));
@@ -425,6 +448,8 @@ classdef radial_perfusion < handle
             end
             % image processing
             % TODO: export complex images
+            [imx, imy, ~,~] = size(recon_all);
+            recon_all = recon_all(imx/4+1:3*imx/4, imy/4+1:3*imy/4,:,:);
             img = abs(recon_all);
             logging.debug("Image data is size %d x %d x %d after coil combine and phase oversampling removal", size(img))
 
