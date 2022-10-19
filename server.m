@@ -44,7 +44,7 @@ classdef server < handle
 
         function handle(obj)
             try
-                conn = connection(obj.tcpHandle, obj.log, true, '', '/tmp/rawdata/');
+                conn = connection(obj.tcpHandle, obj.log, false, '', '/data/fire_rawdata/');
                 config = next(conn);
                 metadata = next(conn);
 
@@ -69,12 +69,14 @@ classdef server < handle
                     obj.log.info("Starting mapvbvd processing based on config")
                     recon = fire_mapVBVD;
                 elseif strcmpi(config, "perfusion_rest")
+                    
                     obj.log.info("Starting perfusion_rest processing based on config")
                     recon = perfusion_rest;
                 elseif strcmpi(config, "cine_flash_cartesian")
                     obj.log.info("Starting cine_flash_cartesian processing based on config")
                     recon = cine_flash_cartesian;
                 elseif strcmpi(config, "radial_perfusion")
+                   
                     obj.log.info("Starting cine_flash_cartesian processing based on config")
                     recon = radial_perfusion;
                 else
