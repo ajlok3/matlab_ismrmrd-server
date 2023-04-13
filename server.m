@@ -75,8 +75,10 @@ classdef server < handle
                 elseif strcmpi(config, "cine_flash_cartesian")
                     obj.log.info("Starting cine_flash_cartesian processing based on config")
                     recon = cine_flash_cartesian;
+                elseif strcmpi(config, "lge_3d")
+                    obj.log.info("Starting 3D LGE processing based on config")
+                    recon = lge_3d;
                 elseif strcmpi(config, "radial_perfusion")
-                   
                     obj.log.info("Starting cine_flash_cartesian processing based on config")
                     recon = radial_perfusion;
                 else

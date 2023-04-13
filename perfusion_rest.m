@@ -336,6 +336,7 @@ classdef perfusion_rest < handle
 
             % Format as ISMRMRD image data
             % TODO: send back slice by slice
+            %arr = {};
             for sl=1:size(img, 4)
                 for tm=1:size(img, 3)
                     image = ismrmrd.Image(img(:, :, tm, sl));
@@ -351,7 +352,15 @@ classdef perfusion_rest < handle
 
                     % Copy the relevant AcquisitionHeader fields to ImageHeader
                     image.head = image.head.fromAcqHead(group{centerIdx}.head);
-
+                    
+%                     mil_sec = image.head.acquisition_time_stamp;
+%                     res = double(mod(mil_sec, 400))/400;
+%                     sec = floor(double(mil_sec)/400);
+%                     mins = floor(sec/60);
+%                     hours = floor(mins/60);
+%                     res = res + hours*10000 + mod(mins,60)*100 +mod(sec,60);
+%                     disp(res);
+%                     arr = [arr; [res, sl, tm]]; 
                     % field_of_view is mandatory
                     image.head.field_of_view  = single([metadata.encoding(1).reconSpace.fieldOfView_mm.x ...
                                                         metadata.encoding(1).reconSpace.fieldOfView_mm.y ...
@@ -371,6 +380,9 @@ classdef perfusion_rest < handle
                     meta.ImageColumnDir         = group{centerIdx}.head.phase_dir;
                     meta.InstanceNumber         = tm;
                     meta.ImageComments = metadata.measurementInformation.protocolName;
+                    if tm <= N_PD
+                        meta.SiemensDicom_adFlipAngleDegree = {'double', '5.0'};
+                    end
                     if sl == 1
                         meta.SequenceDescriptionAdditional      = '_AIF';
                         meta.ImageComments = strcat(meta.ImageComments, '_AIF');
@@ -384,6 +396,7 @@ classdef perfusion_rest < handle
                     images{end+1} = image;
                 end
             end
+%             dlmwrite('test.csv', arr, 'delimiter', ',', 'precision', 12);
             logging.info(sprintf('Reconstructed %d images', numel(images)))
         end
 
